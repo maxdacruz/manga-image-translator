@@ -17,7 +17,7 @@ from PIL import Image
 from typing import List, Tuple, Union
 from aiohttp import web
 from marshmallow import Schema, fields, ValidationError
-
+import shutil
 from manga_translator.utils.threading import Throttler
 
 from .args import DEFAULT_ARGS, translator_chain
@@ -62,6 +62,7 @@ from .save import save_result
 # Will be overwritten by __main__.py if module is being run directly (with python -m)
 logger = logging.getLogger('manga_translator')
 
+SERVER_DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 
 def set_main_logger(l):
     global logger
@@ -641,10 +642,10 @@ class MangaTranslatorWeb(MangaTranslator):
 
     def __init__(self, params: dict = None):
         super().__init__(params)
-        self.host = params.get('host', '127.0.0.1')
+        self.host = params.get('host', '0.0.0.0')
         if self.host == '0.0.0.0':
-            self.host = '127.0.0.1'
-        self.port = params.get('port', 5003)
+            self.host = '0.0.0.0'
+        self.port = params.get('port', 8000)
         self.nonce = params.get('nonce', '')
         self.ignore_errors = params.get('ignore_errors', True)
         self._task_id = None
@@ -728,6 +729,9 @@ class MangaTranslatorWeb(MangaTranslator):
             # final.jpg will be renamed if format param is set
             await self.translate_path(self._result_path('input.jpg'), self._result_path('final.jpg'),
                                       params=self._params)
+            if(self._params['directory']):
+                shutil.copyfile(self._result_path('final.jpg'), f'manga_translator/server/static/{self._params["directory"]}/{time.time()}.jpg')
+
             print()
 
             if self.verbose:
@@ -852,6 +856,7 @@ class MangaTranslatorWS(MangaTranslator):
                 'size': task.size,
                 'ws_event_loop': asyncio.get_event_loop(),
                 'ws_count': self.counter,
+                'directory': task.directory,
             }
             self.counter += 1
 
@@ -1036,7 +1041,7 @@ class MangaTranslatorAPI(MangaTranslator):
         nest_asyncio.apply()
         super().__init__(params)
         self.host = params.get('host', '127.0.0.1')
-        self.port = params.get('port', '5003')
+        self.port = params.get('port', '8008')
         self.log_web = params.get('log_web', False)
         self.ignore_errors = params.get('ignore_errors', True)
         self._task_id = None
@@ -1151,7 +1156,7 @@ class MangaTranslatorAPI(MangaTranslator):
         #     return await self.err_handling(self.file_exec, req, None)
 
         app.add_routes(routes)
-        web.run_app(app, host=self.host, port=self.port)
+        web.run_app(app, host=self.host, port=self.port )
 
     async def run_translate(self, translation_params, img):
         return await self.translate(img, translation_params)

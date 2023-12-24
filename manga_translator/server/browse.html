@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Image/Manga Translator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@unocss/reset/tailwind.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@unocss/runtime@0.30.5/uno.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@iconify/iconify@2.2.0/dist/iconify.min.js"></script>
+  <style>
+    [v-cloak],
+    [un-cloak] {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div>
+    <div>
+      <h1>
+        Directory
+      </h1>
+      <div class="flex" id="directory"></div>
+    </div>
+    <div id="galery"></div>
+  </div>
+
+  <script>
+    let activeDirectory = ""
+    let result = null
+    function getFilesList(path) {
+      const url = "/files"
+      fetch(url)
+        .then(response => response.json())
+        .then(data => {
+          result = data
+          const files = data.files
+          const dir = document.getElementById("directory")
+          dir.innerHTML = ""
+          for (const file of files) {
+            if (file.type == "directory") {
+              const a = document.createElement("a")
+              a.classList.add("px-5")
+              a.classList.add("button")
+              a.href = "#"
+              a.innerText = file.name + `(${file.contents.length})`
+              a.addEventListener("click", () => {
+                activeDirectory = file.name
+                getImages(file.name)
+              })
+              dir.appendChild(a)
+            }
+          }
+        })
+    }
+    function getImages() {
+      for (const file of result.files) {
+        if (file.type == "directory" && file.name == activeDirectory) {
+          const galery = document.getElementById("galery")
+          galery.innerHTML = ""
+          for (const image of file.contents) {
+            if (image.type != "file") continue
+            const img = document.createElement("img")
+            img.src = `/static/${activeDirectory}/${image.name}`
+            galery.appendChild(img)
+          }
+
+        }
+      }
+    }
+    getFilesList()
+  </script>
+</body>
+
+</html>

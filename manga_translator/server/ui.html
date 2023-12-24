@@ -132,7 +132,7 @@
             <i class="iconify w-8 h-8 text-gray-500" data-icon="carbon:cloud-upload"></i>
             <div>Paste an image, click to select one or drag and drop here</div>
           </div>
-          <input id="file" type="file" accept="image/png,image/jpeg,image/bmp,image/webp" class="hidden" @change="onfilechange" />
+          <input id="file" type="file"  class="hidden" @change="onfilechange" webkitdirectory directory />
         </label>
         <div class="flex justify-center gap-2">
           <div>
@@ -175,30 +175,25 @@
 
         file: null,
         get fileUri() {
-          return this.file ? URL.createObjectURL(this.file) : null
+          return this.file ? URL.createObjectURL(this.file[0]) : null
         },
         detectionResolution: 'M',
         textDetector: 'auto',
         renderTextDirection: 'auto',
-        translator: 'youdao',
-        validTranslators: ['youdao', 'baidu', 'google', 'deepl', 'papago', 'caiyun', 'offline', 'gpt3.5', 'none'],
+        translator: 'sugoi',
+        validTranslators: ['youdao', 'baidu', 'google', 'deepl', 'papago', 'caiyun', 'offline', 'gpt3.5', 'none', 'sugoi'],
         getTranslatorName(key) {
           if (key == 'none')
             return "No Text"
           return key ? key[0].toUpperCase() + key.slice(1) : "";
         },
-        targetLanguage: 'CHS',
+        targetLanguage: 'ENG',
         ondrop(e) {
-          const file = e.dataTransfer?.files?.[0]
-          if (file && acceptTypes.includes(file.type)) {
-            this.file = file
-          }
+          const file = e.dataTransfer?.files
         },
         onfilechange(e) {
-          const file = e.target.files?.[0]
-          if (file && acceptTypes.includes(file.type)) {
-            this.file = file
-          }
+          const file = e.target.files
+          this.file = file
         },
         onpaste(e) {
           const items = (e.clipboardData || e.originalEvent.clipboardData).items
@@ -287,7 +282,11 @@
           this.status = 'upload'
 
           const formData = new FormData()
-          formData.append('file', this.file)
+          let i = 0
+          for (const iterator of this.file) {
+            formData.append('file'+i, iterator)
+            i++
+          }
           formData.append('size', this.detectionResolution)
           formData.append('detector', this.textDetector)
           formData.append('direction', this.renderTextDirection)

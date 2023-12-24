@@ -13,6 +13,7 @@ from aiohttp import web
 from collections import deque
 from imagehash import phash
 from oscrypto import util as crypto_utils
+from datetime import datetime
 
 SERVER_DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 BASE_PATH = os.path.dirname(os.path.dirname(SERVER_DIR_PATH))
@@ -44,6 +45,7 @@ VALID_LANGUAGES = {
 VALID_DETECTORS = set(['default', 'ctd'])
 VALID_DIRECTIONS = set(['auto', 'h', 'v'])
 VALID_TRANSLATORS = [
+    'sugoi',
     'youdao',
     'baidu',
     'google',
@@ -53,7 +55,6 @@ VALID_TRANSLATORS = [
     'gpt3.5',
     'nllb',
     'nllb_big',
-    'sugoi',
     'jparacrawl',
     'jparacrawl_big',
     'm2m100',
@@ -114,11 +115,35 @@ async def index_async(request):
             content = re.sub(r'(?<=translator: )(.*)(?=,)', repr(AVAILABLE_TRANSLATORS[0]), content)
             content = re.sub(r'(?<=validTranslators: )(\[.*\])(?=,)', repr(AVAILABLE_TRANSLATORS), content)
         return web.Response(text=content, content_type='text/html')
+    
 
 @routes.get("/manual")
 async def index_async(request):
     with open(os.path.join(SERVER_DIR_PATH, 'manual.html'), 'r', encoding='utf8') as fp:
         return web.Response(text=fp.read(), content_type='text/html')
+    
+@routes.get("/browse")
+async def index_async(request):
+    with open(os.path.join(SERVER_DIR_PATH, 'browse.html'), 'r', encoding='utf8') as fp:
+        return web.Response(text=fp.read(), content_type='text/html')
+    
+
+@routes.get("/files")
+async def get_files_async(request):
+    global SERVER_DIR_PATH
+    file_tree = []
+    for root, dirs, files in os.walk(os.path.join(SERVER_DIR_PATH, 'static')):
+        current_node = {'name': os.path.basename(root), 'type': 'directory', 'contents': []}
+        files.sort()
+        for file in files:
+            current_node['contents'].append({'name': file, 'type': 'file', 'path': os.path.join(SERVER_DIR_PATH, file)})
+
+        for d in dirs:
+            current_node['contents'].append({'name': d, 'type': 'directory', 'contents': []})
+
+        file_tree.append(current_node)
+
+    return web.json_response({'files' : file_tree})
 
 @routes.get("/result/{taskid}")
 async def result_async(request):
@@ -148,6 +173,7 @@ async def handle_post(request):
     target_language = 'CHS'
     detector = 'default'
     direction = 'auto'
+    images: list[Image.Image] = []
     if 'tgt_lang' in data:
         target_language = data['tgt_lang'].upper()
         # TODO: move dicts to their own files to reduce load time
@@ -175,9 +201,19 @@ async def handle_post(request):
             detection_size = 2048
         elif size_text == 'X':
             detection_size = 2560
-    if 'file' in data:
-        file_field = data['file']
-        content = file_field.file.read()
+    if 'file0' in data:
+        while True:
+            try:
+                file_field = data[f'file{len(images)}']
+                content = file_field.file.read()
+                img = Image.open(io.BytesIO(content))
+                img.verify()
+                img = Image.open(io.BytesIO(content))
+                if img.width * img.height > MAX_IMAGE_SIZE_PX:
+                    return web.json_response({'status': 'error-too-large'})
+                images.append(img)
+            except KeyError:
+                break
     elif 'url' in data:
         from aiohttp import ClientSession
         async with ClientSession() as session:
@@ -188,15 +224,8 @@ async def handle_post(request):
                     return web.json_response({'status': 'error'})
     else:
         return web.json_response({'status': 'error'})
-    try:
-        img = Image.open(io.BytesIO(content))
-        img.verify()
-        img = Image.open(io.BytesIO(content))
-        if img.width * img.height > MAX_IMAGE_SIZE_PX:
-            return web.json_response({'status': 'error-too-large'})
-    except Exception:
-        return web.json_response({'status': 'error-img-corrupt'})
-    return img, detection_size, selected_translator, target_language, detector, direction
+    print(f'Got {len(images)} images')
+    return images, detection_size, selected_translator, target_language, detector, direction
 
 @routes.post("/run")
 async def run_async(request):
@@ -414,44 +443,54 @@ async def submit_async(request):
     global FORMAT
     x = await handle_post(request)
     if isinstance(x, tuple):
-        img, size, selected_translator, target_language, detector, direction = x
+        images, size, selected_translator, target_language, detector, direction = x
     else:
-        return x
-    task_id = f'{phash(img, hash_size = 16)}-{size}-{selected_translator}-{target_language}-{detector}-{direction}'
-    now = time.time()
-    print(f'New `submit` task {task_id}')
-    if os.path.exists(f'result/{task_id}/final.{FORMAT}'):
-        TASK_STATES[task_id] = {
-            'info': 'saved',
-            'finished': True,
-        }
-        TASK_DATA[task_id] = {
-            'detection_size': size,
-            'translator': selected_translator,
-            'target_lang': target_language,
-            'detector': detector,
-            'direction': direction,
-            'created_at': now,
-            'requested_at': now,
-        }
-    elif task_id not in TASK_DATA or task_id not in TASK_STATES:
-        os.makedirs(f'result/{task_id}/', exist_ok=True)
-        img = img.convert('RGB')
-        img.save(f'result/{task_id}/input.jpg')
-        QUEUE.append(task_id)
-        TASK_STATES[task_id] = {
-            'info': 'pending',
-            'finished': False,
-        }
-        TASK_DATA[task_id] = {
-            'detection_size': size,
-            'translator': selected_translator,
-            'target_lang': target_language,
-            'detector': detector,
-            'direction': direction,
-            'created_at': now,
-            'requested_at': now,
-        }
+        return web.json_response({'status': 'error'})
+    
+    directory = f'{int(round(datetime.now().timestamp()))}'
+    if os.path.exists(f'{os.path.join(SERVER_DIR_PATH)}/static/{directory}') == False:
+        os.makedirs(f'{os.path.join(SERVER_DIR_PATH)}/static/{directory}')
+
+    print(f'New `submit` task {directory}')
+    
+    for img in images:
+        task_id = f'{phash(img, hash_size = 16)}-{size}-{selected_translator}-{target_language}-{detector}-{direction}'
+        now = time.time()
+        print(f'New `submit` task {task_id}')
+        if os.path.exists(f'result/{task_id}/final.{FORMAT}'):
+            TASK_STATES[task_id] = {
+                'info': 'saved',
+                'finished': True,
+            }
+            TASK_DATA[task_id] = {
+                'detection_size': size,
+                'translator': selected_translator,
+                'target_lang': target_language,
+                'detector': detector,
+                'direction': direction,
+                'created_at': now,
+                'requested_at': now,
+                'directory': directory,
+            }
+        elif task_id not in TASK_DATA or task_id not in TASK_STATES:
+            os.makedirs(f'result/{task_id}/', exist_ok=True)
+            img = img.convert('RGB')
+            img.save(f'result/{task_id}/input.jpg')
+            QUEUE.append(task_id)
+            TASK_STATES[task_id] = {
+                'info': 'pending',
+                'finished': False,
+            }
+            TASK_DATA[task_id] = {
+                'detection_size': size,
+                'translator': selected_translator,
+                'target_lang': target_language,
+                'detector': detector,
+                'direction': direction,
+                'created_at': now,
+                'requested_at': now,
+                'directory': directory,
+            }
     return web.json_response({'task_id': task_id, 'status': 'successful'})
 
 @routes.post("/manual-translate")
@@ -493,7 +532,9 @@ async def manual_translate_async(request):
             return web.json_response({'task_id' : task_id, 'status': 'successful'})
     return web.json_response({'task_id' : task_id, 'status': 'error'})
 
+
 app.add_routes(routes)
+app.add_routes([web.static('/static',os.path.join(SERVER_DIR_PATH, 'static'), show_index=True)])
 
 
 def generate_nonce():
